@@ -37,6 +37,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { MoneyInput } from "@/components/ui/money-input";
 
 const storeSchema = z.object({
   storeName: z.string().min(1, "Store name is required"),
@@ -178,11 +179,10 @@ export function PriceComparison() {
                         <FormItem>
                           <FormLabel>Base Price</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="1000"
-                              {...field}
+                            <MoneyInput
+                              placeholder="100.000 ₫"
                               value={field.value as number}
+                              onChange={field.onChange}
                             />
                           </FormControl>
                           <FormMessage />
@@ -255,11 +255,10 @@ export function PriceComparison() {
                           <FormItem>
                             <FormLabel className="text-xs">Min Spend</FormLabel>
                             <FormControl>
-                              <Input
-                                type="number"
+                              <MoneyInput
                                 className="h-8"
-                                {...field}
                                 value={field.value as number}
+                                onChange={field.onChange}
                               />
                             </FormControl>
                           </FormItem>
@@ -272,11 +271,10 @@ export function PriceComparison() {
                           <FormItem>
                             <FormLabel className="text-xs">Max Cap</FormLabel>
                             <FormControl>
-                              <Input
-                                type="number"
+                              <MoneyInput
                                 className="h-8"
-                                {...field}
                                 value={field.value as number}
+                                onChange={field.onChange}
                               />
                             </FormControl>
                           </FormItem>

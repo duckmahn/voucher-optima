@@ -26,6 +26,7 @@ import {
   type Voucher,
   type OptimizationResult,
 } from "@/lib/utils";
+import { MoneyInput } from "@/components/ui/money-input";
 
 const formSchema = z.object({
   percentage: z.coerce
@@ -96,11 +97,10 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
                 <FormItem>
                   <FormLabel>Minimum Condition</FormLabel>
                   <FormControl>
-                    <Input
-                      type="number"
-                      placeholder="100"
-                      {...field}
+                    <MoneyInput
+                      placeholder="100.000 ₫"
                       value={field.value as number}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormDescription>
@@ -117,11 +117,10 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
                 <FormItem>
                   <FormLabel>Max Discount Cap</FormLabel>
                   <FormControl>
-                    <Input
-                      type="number"
-                      placeholder="50"
-                      {...field}
+                    <MoneyInput
+                      placeholder="50.000 ₫"
                       value={field.value as number}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormDescription>
