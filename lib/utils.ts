@@ -5,6 +5,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function formatVND(amount: number): string {
+  return new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+  }).format(amount);
+}
+
 export type Voucher = {
   percentage: number;
   minCondition: number;
@@ -17,6 +24,7 @@ export type OptimizationResult = {
   finalPrice: number;
   message: string;
   range?: string;
+  voucher: Voucher;
 };
 
 export function calculateOptimalRange(voucher: Voucher): OptimizationResult {
@@ -67,5 +75,51 @@ export function calculateOptimalRange(voucher: Voucher): OptimizationResult {
     finalPrice: Math.max(minCondition, priceForMaxDiscount) - discountAtOptimal,
     message,
     range,
+    voucher,
   };
+}
+
+export type StoreOption = {
+  id: string;
+  storeName: string;
+  basePrice: number;
+  url?: string;
+  voucher?: Voucher;
+};
+
+export type ComparisonResult = {
+  storeOption: StoreOption;
+  finalPrice: number;
+  discountAmount: number;
+  appliedVoucher: boolean;
+};
+
+export function comparePrices(options: StoreOption[]): ComparisonResult[] {
+  const results = options.map((option) => {
+    let finalPrice = option.basePrice;
+    let discountAmount = 0;
+    let appliedVoucher = false;
+
+    if (option.voucher) {
+      const { percentage, minCondition, maxDiscount } = option.voucher;
+
+      if (option.basePrice >= minCondition) {
+        // Calculate discount
+        const calculatedDiscount = option.basePrice * (percentage / 100);
+        discountAmount = Math.min(calculatedDiscount, maxDiscount);
+        finalPrice = option.basePrice - discountAmount;
+        appliedVoucher = true;
+      }
+    }
+
+    return {
+      storeOption: option,
+      finalPrice,
+      discountAmount,
+      appliedVoucher,
+    };
+  });
+
+  // Sort by final price ascending
+  return results.sort((a, b) => a.finalPrice - b.finalPrice);
 }

@@ -1,6 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { type OptimizationResult } from "@/lib/utils";
-import { CheckCircle2, AlertCircle } from "lucide-react";
+import { type OptimizationResult, formatVND } from "@/lib/utils";
+import { CheckCircle2, AlertCircle, Save, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface OptimizationResultDisplayProps {
   result: OptimizationResult | null;
@@ -9,6 +12,34 @@ interface OptimizationResultDisplayProps {
 export function OptimizationResultDisplay({
   result,
 }: OptimizationResultDisplayProps) {
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!result) return;
+
+    try {
+      setSaving(true);
+      const { error } = await supabase.from("vouchers").insert({
+        percentage: result.voucher.percentage,
+        min_condition: result.voucher.minCondition,
+        max_discount: result.voucher.maxDiscount,
+        code: "SAVED-" + Math.floor(Math.random() * 1000), // Simple auto-generated code
+      });
+
+      if (error) throw error;
+
+      alert("Voucher saved successfully!");
+      // Ideally trigger a refresh of the list, but for now a page reload or just knowing it's saved is okay.
+      // We can use a global context or SWR/React Query for better state management later.
+      window.location.reload();
+    } catch (err: any) {
+      console.error("Error saving voucher:", err);
+      alert("Failed to save voucher: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (!result) {
     return (
       <Card className="w-full h-full flex items-center justify-center min-h-75 bg-muted/50 border-dashed">
@@ -47,7 +78,7 @@ export function OptimizationResultDisplay({
           <div className="p-4 rounded-lg bg-secondary/50 border border-secondary">
             <p className="text-sm text-muted-foreground mb-1">Max Discount</p>
             <p className="text-2xl font-bold text-green-600">
-              -{result.discountAmount.toFixed(2)}
+              -{formatVND(result.discountAmount)}
             </p>
           </div>
           <div className="p-4 rounded-lg bg-secondary/50 border border-secondary">
@@ -55,7 +86,7 @@ export function OptimizationResultDisplay({
               Effective Final Price
             </p>
             <p className="text-2xl font-bold text-foreground">
-              {result.finalPrice.toFixed(2)}
+              {formatVND(result.finalPrice)}
             </p>
           </div>
         </div>
@@ -67,6 +98,15 @@ export function OptimizationResultDisplay({
             amount, effectively lowering your percentage savings.
           </p>
         </div>
+
+        <Button onClick={handleSave} disabled={saving} className="w-full">
+          {saving ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="mr-2 h-4 w-4" />
+          )}
+          Save Voucher to Database
+        </Button>
       </CardContent>
     </Card>
   );
