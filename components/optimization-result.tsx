@@ -24,6 +24,10 @@ export function OptimizationResultDisplay({
         min_condition: result.voucher.minCondition,
         max_discount: result.voucher.maxDiscount,
         code: "SAVED-" + Math.floor(Math.random() * 1000), // Simple auto-generated code
+        product_price: result.voucher.productPrice,
+        product_url: result.voucher.productUrl,
+        product_image: result.voucher.productImage,
+        product_name: result.voucher.productName,
       });
 
       if (error) throw error;
@@ -59,44 +63,105 @@ export function OptimizationResultDisplay({
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-6 space-y-6">
-        <div className="space-y-2">
-          <h3 className="text-lg font-semibold text-foreground">
+        {result.productCalculation && (
+          <div className="flex items-center gap-4 p-4 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900">
+            {result.voucher.productImage ? (
+              <img
+                src={result.voucher.productImage}
+                alt="Product"
+                className="w-16 h-16 object-cover rounded-md border bg-white shadow-sm"
+              />
+            ) : (
+              <div className="w-16 h-16 rounded-md bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center text-2xl">
+                🛍️
+              </div>
+            )}
+            <div className="flex-1">
+              <h3 className="font-bold text-lg text-indigo-900 dark:text-indigo-100">
+                {result.voucher.productName || "Product Analysis"}
+              </h3>
+              <div className="flex items-center gap-2 mt-1">
+                {result.voucher.productUrl && (
+                  <a
+                    href={result.voucher.productUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 transition-colors"
+                  >
+                    View Product ↗
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-4 rounded-lg bg-secondary/30 border border-secondary flex flex-col justify-center">
+            <p className="text-sm text-muted-foreground mb-1">
+              {result.productCalculation
+                ? "Original Price"
+                : "Optimal Spend Range"}
+            </p>
+            <p
+              className={`font-bold text-foreground ${
+                result.productCalculation
+                  ? "text-xl text-muted-foreground line-through decoration-destructive/50"
+                  : "text-2xl"
+              }`}
+            >
+              {result.productCalculation
+                ? formatVND(result.productCalculation.price)
+                : result.range}
+            </p>
+          </div>
+          <div className="p-4 rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-100 dark:border-green-900 flex flex-col justify-center">
+            <p className="text-sm text-green-700 dark:text-green-300 mb-1">
+              {result.productCalculation ? "You Save" : "Max Discount"}
+            </p>
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+              -
+              {formatVND(
+                result.productCalculation
+                  ? result.productCalculation.discount
+                  : result.discountAmount
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="p-4 rounded-lg bg-primary/10 border border-primary/20 flex flex-col justify-center relative overflow-hidden">
+          <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-[10px] px-2 py-0.5 rounded-bl">
+            Final
+          </div>
+          <p className="text-sm text-primary/80 mb-1">
+            {result.productCalculation ? (
+              <>Price After Voucher</>
+            ) : (
+              "Effective Final Price"
+            )}
+          </p>
+          <p className="text-3xl font-extrabold text-primary">
+            {formatVND(
+              result.productCalculation
+                ? result.productCalculation.finalPrice
+                : result.finalPrice
+            )}
+          </p>
+        </div>
+        <div className="space-y-2 p-4 rounded-lg bg-muted/30 border border-dashed">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
             Recommendation
           </h3>
-          <p className="text-muted-foreground text-lg leading-relaxed">
+          <p className="text-foreground text-base leading-relaxed font-medium">
             {result.message}
           </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 rounded-lg bg-secondary/50 border border-secondary">
-            <p className="text-sm text-muted-foreground mb-1">
-              Optimal Spend Range
-            </p>
-            <p className="text-2xl font-bold text-foreground">{result.range}</p>
-          </div>
-          <div className="p-4 rounded-lg bg-secondary/50 border border-secondary">
-            <p className="text-sm text-muted-foreground mb-1">Max Discount</p>
-            <p className="text-2xl font-bold text-green-600">
-              -{formatVND(result.discountAmount)}
-            </p>
-          </div>
-          <div className="p-4 rounded-lg bg-secondary/50 border border-secondary">
-            <p className="text-sm text-muted-foreground mb-1">
-              Effective Final Price
-            </p>
-            <p className="text-2xl font-bold text-foreground">
-              {formatVND(result.finalPrice)}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3 p-4 rounded-lg bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 text-sm">
-          <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
-          <p>
-            Spending more than the optimal price will not increase your discount
-            amount, effectively lowering your percentage savings.
-          </p>
+          {result.productCalculation?.recommendationComment && (
+            <div className="mt-3 pt-3 border-t border-dashed border-muted-foreground/20">
+              <p className="text-sm text-muted-foreground italic">
+                💡 {result.productCalculation.recommendationComment}
+              </p>
+            </div>
+          )}
         </div>
 
         <Button onClick={handleSave} disabled={saving} className="w-full">

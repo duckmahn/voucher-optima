@@ -15,71 +15,71 @@ with time zone default timezone
   percentage numeric not null,
   min_condition numeric not null,
   max_discount numeric not null,
-  code text
+  code text,
+  user_id uuid references auth.users
+(id),
+  product_price numeric,
+  product_url text,
+  product_image text
 );
 
 -- Set up Row Level Security (RLS) for vouchers
 alter table vouchers enable row level security;
 
--- Policies for vouchers (drop if exists to avoid errors on re-run, or use DO block)
+-- Policies for vouchers
 drop policy
 if exists "Enable read access for all users" on vouchers;
-create policy "Enable read access for all users" on vouchers
-  for
-select using (true);
-
 drop policy
 if exists "Enable insert access for all users" on vouchers;
-create policy "Enable insert access for all users" on vouchers
-  for
-insert with check
-    (true)
-;
-
 drop policy
 if exists "Enable delete access for all users" on vouchers;
-create policy "Enable delete access for all users" on vouchers
+drop policy
+if exists "Users can view their own vouchers" on vouchers;
+drop policy
+if exists "Users can insert their own vouchers" on vouchers;
+drop policy
+if exists "Users can delete their own vouchers" on vouchers;
+
+-- Create new policies based on user_id
+create policy "Users can view their own vouchers" on vouchers
   for
-delete using (true);
+select using (auth.uid() = user_id);
 
+create policy "Users can insert their own vouchers" on vouchers
+  for
+insert with check (auth.uid() =
+user_id);
 
--- Create saved_comparisons table if it doesn't exist
-create table
-if not exists saved_comparisons
-(
-  id uuid default gen_random_uuid
-() primary key,
-  title text,
-  stores jsonb not null,
-  created_at timestamp
-with time zone default timezone
-('utc'::text, now
-()) not null
-);
-
--- Set up Row Level Security (RLS) for saved_comparisons
-alter table saved_comparisons enable row level security;
+create policy "Users can delete their own vouchers" on vouchers
+  for
+delete using (auth.uid
+() = user_id);
 
 -- Policies for saved_comparisons
 drop policy
 if exists "Enable read access for all users" on saved_comparisons;
-create policy "Enable read access for all users"
-  on saved_comparisons for
-select
-    using (true);
-
 drop policy
 if exists "Enable insert access for all users" on saved_comparisons;
-create policy "Enable insert access for all users"
-  on saved_comparisons for
-insert
-  with check
-    (true)
-;
-
 drop policy
 if exists "Enable delete access for all users" on saved_comparisons;
-create policy "Enable delete access for all users"
-  on saved_comparisons for
-delete
-  using (true);
+drop policy
+if exists "Users can view their own comparisons" on saved_comparisons;
+drop policy
+if exists "Users can insert their own comparisons" on saved_comparisons;
+drop policy
+if exists "Users can delete their own comparisons" on saved_comparisons;
+
+-- Create new policies based on user_id
+create policy "Users can view their own comparisons" on saved_comparisons
+  for
+select using (auth.uid() = user_id);
+
+create policy "Users can insert their own comparisons" on saved_comparisons
+  for
+insert with check (auth.uid() =
+user_id);
+
+create policy "Users can delete their own comparisons" on saved_comparisons
+  for
+delete using (auth.uid
+() = user_id);
