@@ -2,7 +2,9 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
+import { useState } from "react";
 import { z } from "zod";
+import { apiFetchClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -39,7 +41,7 @@ const formSchema = z.object({
   maxDiscount: z.coerce.number().min(0, "Max discount must be non-negative"),
   productPrice: z.coerce.number().optional(),
   productUrl: z.string().url().optional().or(z.literal("")),
-  productImage: z.string().url().optional().or(z.literal("")),
+  productImage: z.string().optional().or(z.literal("")),
   productName: z.string().optional(),
 });
 
@@ -48,6 +50,8 @@ interface VoucherFormProps {
 }
 
 export function VoucherForm({ onCalculate }: VoucherFormProps) {
+  const [fetchingProduct, setFetchingProduct] = useState(false);
+
   const form = useForm({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -56,6 +60,27 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
       maxDiscount: 50,
     },
   });
+
+  async function handleUrlBlur(url: string) {
+    if (!url) return;
+    setFetchingProduct(true);
+    try {
+      const res = await apiFetchClient('/product/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) return;
+      const data = await res.json() as { name: string | null; price: number | null; imageKey: string | null };
+      if (data.name) form.setValue('productName', data.name);
+      if (data.price) form.setValue('productPrice', data.price);
+      if (data.imageKey) form.setValue('productImage', data.imageKey);
+    } catch {
+      // non-fatal
+    } finally {
+      setFetchingProduct(false);
+    }
+  }
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     const result = calculateOptimalRange(values);
@@ -121,12 +146,20 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
                   name="productUrl"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Product Link</FormLabel>
+                      <FormLabel className="flex items-center gap-2">
+                        Product Link
+                        {fetchingProduct && (
+                          <span className="text-xs text-muted-foreground animate-pulse">
+                            Fetching…
+                          </span>
+                        )}
+                      </FormLabel>
                       <FormControl>
                         <Input
                           placeholder="https://..."
                           {...field}
                           value={field.value?.toString() || ""}
+                          onBlur={(e) => handleUrlBlur(e.target.value)}
                         />
                       </FormControl>
                       <FormMessage />
@@ -138,13 +171,40 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
                   name="productImage"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Image URL</FormLabel>
+                      <FormLabel>Product Image</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="https://..."
-                          {...field}
-                          value={field.value?.toString() || ""}
-                        />
+                        <div className="space-y-2">
+                          {field.value && (
+                            <img
+                              src={`/api/proxy/images/${field.value}`}
+                              alt="Product preview"
+                              className="w-20 h-20 object-cover rounded border"
+                            />
+                          )}
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            className="cursor-pointer"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const formData = new FormData();
+                              formData.append('file', file);
+                              try {
+                                const res = await fetch('/api/proxy/images/upload', {
+                                  method: 'POST',
+                                  body: formData,
+                                });
+                                if (res.ok) {
+                                  const { imageKey } = await res.json() as { imageKey: string };
+                                  field.onChange(imageKey);
+                                }
+                              } catch {
+                                // non-fatal
+                              }
+                            }}
+                          />
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
