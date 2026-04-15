@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabase } from "@/lib/supabase";
+import { apiFetchClient } from "@/lib/api";
 import { formatVND } from "@/lib/utils";
 import { Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,14 +28,10 @@ export function SavedVouchers() {
   async function fetchVouchers() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("vouchers")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      setVouchers(data || []);
+      const res = await apiFetchClient('/vouchers');
+      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+      const data = (await res.json()) as SavedVoucher[];
+      setVouchers(data);
     } catch (err: any) {
       console.error("Error fetching vouchers:", err);
       setError(err.message);
@@ -46,10 +42,8 @@ export function SavedVouchers() {
 
   async function deleteVoucher(id: string) {
     try {
-      const { error } = await supabase.from("vouchers").delete().eq("id", id);
-
-      if (error) throw error;
-
+      const res = await apiFetchClient(`/vouchers/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Failed to delete: ${res.status}`);
       setVouchers(vouchers.filter((v) => v.id !== id));
     } catch (err: any) {
       console.error("Error deleting voucher:", err);
@@ -80,10 +74,6 @@ export function SavedVouchers() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-destructive">{error}</p>
-          <p className="text-xs text-muted-foreground mt-2">
-            Make sure your Supabase credentials are correct in .env and the
-            table exists.
-          </p>
         </CardContent>
       </Card>
     );
