@@ -2,13 +2,13 @@ import { ProductData } from './shopee';
 
 function extractMeta(html: string, property: string): string | null {
   const patterns = [
-    new RegExp(`<meta[^>]+property=["']${property}["'][^>]+content=["']([^"']+)["']`, 'i'),
-    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${property}["']`, 'i'),
-    new RegExp(`<meta[^>]+name=["']${property}["'][^>]+content=["']([^"']+)["']`, 'i'),
+    new RegExp(`<meta[^>]+property=["']${property}["'][^>]+content=(["'])([^"']+)\\1`, 'i'),
+    new RegExp(`<meta[^>]+content=(["'])([^"']+)\\1[^>]+property=["']${property}["']`, 'i'),
+    new RegExp(`<meta[^>]+name=["']${property}["'][^>]+content=(["'])([^"']+)\\1`, 'i'),
   ];
   for (const pattern of patterns) {
     const match = html.match(pattern);
-    if (match) return match[1];
+    if (match) return match[2]; // group 2 is the content value (group 1 is the quote char)
   }
   return null;
 }
