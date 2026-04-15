@@ -36,7 +36,7 @@ import {
   ExternalLink,
   Loader2,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { apiFetchClient } from "@/lib/api";
 import { MoneyInput } from "@/components/ui/money-input";
 
 const storeSchema = z.object({
@@ -113,12 +113,15 @@ export function PriceComparison() {
         voucher: r.storeOption.voucher,
       }));
 
-      const { error } = await supabase.from("saved_comparisons").insert({
-        title: `Comparison - ${new Date().toLocaleString()}`,
-        stores: storesToSave,
+      const res = await apiFetchClient('/comparisons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `Comparison - ${new Date().toLocaleString()}`,
+          stores: storesToSave,
+        }),
       });
-
-      if (error) throw error;
+      if (!res.ok) throw new Error(`Failed to save: ${res.status}`);
 
       alert("Comparison saved successfully!");
       window.location.reload(); // Refresh to show in saved list
