@@ -1,9 +1,11 @@
+"use client";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type OptimizationResult, formatVND } from "@/lib/utils";
 import { CheckCircle2, AlertCircle, Save, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { apiFetchClient } from "@/lib/api";
 
 interface OptimizationResultDisplayProps {
   result: OptimizationResult | null;
@@ -19,18 +21,21 @@ export function OptimizationResultDisplay({
 
     try {
       setSaving(true);
-      const { error } = await supabase.from("vouchers").insert({
-        percentage: result.voucher.percentage,
-        min_condition: result.voucher.minCondition,
-        max_discount: result.voucher.maxDiscount,
-        code: "SAVED-" + Math.floor(Math.random() * 1000), // Simple auto-generated code
-        product_price: result.voucher.productPrice,
-        product_url: result.voucher.productUrl,
-        product_image: result.voucher.productImage,
-        product_name: result.voucher.productName,
+      const res = await apiFetchClient('/vouchers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          percentage: result.voucher.percentage,
+          min_condition: result.voucher.minCondition,
+          max_discount: result.voucher.maxDiscount,
+          code: "SAVED-" + Math.floor(Math.random() * 1000),
+          product_price: result.voucher.productPrice,
+          product_url: result.voucher.productUrl,
+          product_image: result.voucher.productImage,
+          product_name: result.voucher.productName,
+        }),
       });
-
-      if (error) throw error;
+      if (!res.ok) throw new Error(`Failed to save: ${res.status}`);
 
       alert("Voucher saved successfully!");
       // Ideally trigger a refresh of the list, but for now a page reload or just knowing it's saved is okay.
