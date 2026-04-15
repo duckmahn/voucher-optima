@@ -1,13 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { apiFetchClient } from "@/lib/api";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,18 +18,24 @@ import {
 import { formatVND } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
+interface StoreEntry {
+  storeName: string;
+  basePrice: number;
+  url?: string;
+  finalPrice: number;
+  discountAmount: number;
+  voucher?: any;
+}
+
+interface ComparisonData {
+  title: string;
+  stores: StoreEntry[];
+}
+
 interface SavedComparison {
   id: string;
-  title: string;
   created_at: string;
-  stores: {
-    storeName: string;
-    basePrice: number;
-    url?: string;
-    finalPrice: number;
-    discountAmount: number;
-    voucher?: any;
-  }[];
+  data: ComparisonData;
 }
 
 export function SavedComparisons() {
@@ -48,14 +51,10 @@ export function SavedComparisons() {
   async function fetchComparisons() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("saved_comparisons")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      setComparisons(data || []);
+      const res = await apiFetchClient('/comparisons');
+      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+      const data = (await res.json()) as SavedComparison[];
+      setComparisons(data);
     } catch (err: any) {
       console.error("Error fetching comparisons:", err);
       setError(err.message);
@@ -66,15 +65,9 @@ export function SavedComparisons() {
 
   async function handleDelete(id: string) {
     if (!confirm("Are you sure you want to delete this comparison?")) return;
-
     try {
-      const { error } = await supabase
-        .from("saved_comparisons")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
-
+      const res = await apiFetchClient(`/comparisons/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Failed to delete: ${res.status}`);
       setComparisons(comparisons.filter((c) => c.id !== id));
     } catch (err: any) {
       alert("Error deleting comparison: " + err.message);
@@ -142,11 +135,11 @@ export function SavedComparisons() {
               </div>
               <div>
                 <h3 className="font-medium">
-                  {comp.title || "Untitled Comparison"}
+                  {comp.data.title || "Untitled Comparison"}
                 </h3>
                 <p className="text-xs text-muted-foreground">
                   {new Date(comp.created_at).toLocaleDateString()} •{" "}
-                  {comp.stores.length} stores
+                  {comp.data.stores.length} stores
                 </p>
               </div>
             </div>
@@ -172,7 +165,7 @@ export function SavedComparisons() {
 
           {expandedId === comp.id && (
             <div className="border-t bg-muted/10 p-4 space-y-3">
-              {comp.stores.map((store, idx) => (
+              {comp.data.stores.map((store, idx) => (
                 <div
                   key={idx}
                   className={`p-3 rounded-lg border flex items-center justify-between ${
