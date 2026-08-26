@@ -3,8 +3,14 @@ import { NextRequest, NextResponse } from 'next/server';
 const WORKER_URL = process.env.WORKER_URL ?? '';
 
 async function proxyRequest(req: NextRequest, path: string[]) {
-  // NextAuth v5 stores the JWT in a cookie named 'authjs.session-token'
-  const sessionToken = req.cookies.get('authjs.session-token')?.value;
+  // NextAuth v5 names the session cookie 'authjs.session-token' over HTTP and
+  // '__Secure-authjs.session-token' over HTTPS (production) — check both. The cookie name
+  // is also the salt the Worker needs to decrypt the token, so we pass it along instead of
+  // making the Worker guess (and pay for a doomed decrypt attempt) on every request.
+  const httpCookieName = 'authjs.session-token';
+  const httpsCookieName = '__Secure-authjs.session-token';
+  const sessionCookieName = req.cookies.get(httpCookieName) ? httpCookieName : httpsCookieName;
+  const sessionToken = req.cookies.get(sessionCookieName)?.value;
   if (!sessionToken) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -14,6 +20,7 @@ async function proxyRequest(req: NextRequest, path: string[]) {
 
   const forwardHeaders = new Headers();
   forwardHeaders.set('Authorization', `Bearer ${sessionToken}`);
+  forwardHeaders.set('X-Session-Cookie-Name', sessionCookieName);
 
   const contentType = req.headers.get('content-type');
   if (contentType) forwardHeaders.set('Content-Type', contentType);
