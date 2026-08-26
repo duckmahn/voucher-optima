@@ -199,43 +199,93 @@ git commit -m "feat: add d1 schema for vouchers and comparisons"
 ### Task 3: JWT auth middleware
 
 **Files:**
+- Create: `worker/src/lib/verify-session-token.ts`
 - Create: `worker/src/middleware/auth.ts`
 
-**Step 1: Write the middleware**
+> **Correction:** an earlier version of this plan verified the token as a plain HS256-signed
+> JWS (split on `.` into header/payload/signature, HMAC-verify). That does not work — Auth.js
+> v5's `jwt` session strategy encrypts the cookie as a **JWE** (`alg: "dir"`, `enc:
+> "A256CBC-HS512"`, 5 dot-separated segments), not a signed JWS. An HS256 verifier throws
+> `Invalid token format` on every real token (`alg: "dir"` leaves the JWE's second segment
+> empty), so it always 401s. See `@auth/core/jwt.js`'s `encode`/`decode`/
+> `getDerivedEncryptionKey` for the reference implementation this reverse-engineers. The
+> decryption key is derived via HKDF-SHA256 from the secret, salted with the *session cookie's
+> name* — which differs between HTTP (`authjs.session-token`) and HTTPS
+> (`__Secure-authjs.session-token`), so the Worker tries both unless the proxy tells it which
+> one it read (see Task 11).
+
+**Step 1: Write the pure token-verification module**
+
+`worker/src/lib/verify-session-token.ts`:
+```ts
+import { jwtDecrypt } from 'jose';
+
+const CONTENT_ENC_ALG = 'A256CBC-HS512';
+
+async function deriveEncryptionKey(secret: string, salt: string): Promise<Uint8Array> {
+  const info = `Auth.js Generated Encryption Key (${salt})`;
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    'HKDF',
+    false,
+    ['deriveBits']
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode(salt),
+      info: new TextEncoder().encode(info),
+    },
+    keyMaterial,
+    64 * 8 // 64 bytes required for A256CBC-HS512
+  );
+  return new Uint8Array(bits);
+}
+
+const SESSION_COOKIE_SALTS = ['authjs.session-token', '__Secure-authjs.session-token'] as const;
+
+export async function verifyNextAuthSessionToken(
+  token: string,
+  secret: string,
+  cookieNameHint?: string
+): Promise<{ sub: string }> {
+  const salts = cookieNameHint ? [cookieNameHint] : SESSION_COOKIE_SALTS;
+  let lastError: unknown;
+  for (const salt of salts) {
+    try {
+      const encryptionKey = await deriveEncryptionKey(secret, salt);
+      const { payload } = await jwtDecrypt(token, encryptionKey, {
+        keyManagementAlgorithms: ['dir'],
+        contentEncryptionAlgorithms: [CONTENT_ENC_ALG],
+      });
+      if (typeof payload.sub !== 'string' || !payload.sub) {
+        throw new Error('Missing sub claim');
+      }
+      return { sub: payload.sub };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Invalid session token');
+}
+```
+
+Add `jose` as a Worker dependency (`npm install jose` in `worker/`) — it's the only new
+runtime dependency this requires; no full `next-auth`/`@auth/core` import needed on the
+Worker side.
+
+**Step 2: Write the middleware**
 
 `worker/src/middleware/auth.ts`:
 ```ts
 import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import { Bindings } from '../index';
+import { verifyNextAuthSessionToken } from '../lib/verify-session-token';
 
 type Variables = { userId: string };
-
-async function verifyNextAuthJwt(token: string, secret: string): Promise<{ sub: string }> {
-  // NextAuth JWT uses HS256 with the NEXTAUTH_SECRET
-  const [headerB64, payloadB64, signatureB64] = token.split('.');
-  if (!headerB64 || !payloadB64 || !signatureB64) throw new Error('Invalid token format');
-
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['verify']
-  );
-
-  const data = encoder.encode(`${headerB64}.${payloadB64}`);
-  const signature = Uint8Array.from(atob(signatureB64.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-  const valid = await crypto.subtle.verify('HMAC', key, signature, data);
-  if (!valid) throw new Error('Invalid signature');
-
-  const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
-  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expired');
-  if (!payload.sub) throw new Error('Missing sub claim');
-
-  return { sub: payload.sub };
-}
 
 export const authMiddleware = createMiddleware<{ Bindings: Bindings; Variables: Variables }>(
   async (c, next) => {
@@ -244,8 +294,9 @@ export const authMiddleware = createMiddleware<{ Bindings: Bindings; Variables: 
       throw new HTTPException(401, { message: 'Missing or invalid Authorization header' });
     }
     const token = authHeader.slice(7);
+    const cookieNameHint = c.req.header('X-Session-Cookie-Name') ?? undefined;
     try {
-      const { sub } = await verifyNextAuthJwt(token, c.env.NEXTAUTH_SECRET);
+      const { sub } = await verifyNextAuthSessionToken(token, c.env.NEXTAUTH_SECRET, cookieNameHint);
       c.set('userId', sub);
       await next();
     } catch {
@@ -255,7 +306,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Bindings; Variables: 
 );
 ```
 
-**Step 2: Set the secret for local dev**
+**Step 3: Set the secret for local dev**
 
 ```bash
 # Create a .dev.vars file (gitignored) for local wrangler dev
@@ -263,17 +314,22 @@ echo 'NEXTAUTH_SECRET=dev-secret-change-in-production' > worker/.dev.vars
 echo '.dev.vars' >> .gitignore
 ```
 
-**Step 3: Verify TypeScript**
+The placeholder value above must be replaced with the *same* value as `AUTH_SECRET` in the
+root `.env.local` (Task 10) — `verifyNextAuthSessionToken` derives its decryption key from
+this secret, so a mismatch between the two makes every token fail decryption and 401,
+independently of whether the JWE-decoding logic itself is correct.
+
+**Step 4: Verify TypeScript**
 
 ```bash
 cd worker && npx tsc --noEmit
 ```
 Expected: no errors
 
-**Step 4: Commit**
+**Step 5: Commit**
 
 ```bash
-git add worker/src/middleware/auth.ts worker/.dev.vars .gitignore
+git add worker/src/lib/verify-session-token.ts worker/src/middleware/auth.ts worker/.dev.vars .gitignore
 git commit -m "feat: add jwt auth middleware for worker"
 ```
 
@@ -772,9 +828,11 @@ cat >> .env.local << 'EOF'
 AUTH_SECRET=your-secret-here-generate-with-openssl-rand-base64-32
 AUTH_GOOGLE_ID=your-google-client-id
 AUTH_GOOGLE_SECRET=your-google-client-secret
-NEXT_PUBLIC_WORKER_URL=http://localhost:8787
+WORKER_URL=http://localhost:8787
 EOF
 ```
+
+`WORKER_URL` is server-side only — it's read by the proxy route (Task 11) and never reaches the browser. Add `NEXT_PUBLIC_WORKER_URL` only if some client code needs to call the Worker directly, which this plan doesn't require.
 
 Generate a secret: `openssl rand -base64 32`
 
@@ -787,55 +845,87 @@ git commit -m "feat: add nextauth with google provider"
 
 ---
 
-### Task 11: API fetch wrapper
+### Task 11: API fetch wrapper + server-side proxy
+
+NextAuth v5's `session` object has no `accessToken` field — the JWT callback only ever sets `token.sub`/`session.user.id` (Task 10). So the JWT the Worker needs to verify is the session token itself, and the only place that can safely read it is the server (reading it in a client component means shipping the Worker URL and the raw session token to the browser). That's why this task has two parts: a Next.js route handler that runs server-side, reads the session cookie, and forwards the request to the Worker with the JWT attached — and a thin client helper that just calls that route.
 
 **Files:**
+- Create: `app/api/proxy/[...path]/route.ts`
 - Create: `lib/api.ts`
 
-**Step 1: Write apiFetch**
+**Step 1: Write the proxy route**
 
-`lib/api.ts`:
+`app/api/proxy/[...path]/route.ts`:
 ```ts
-import { auth } from './auth';
+import { NextRequest, NextResponse } from 'next/server';
 
-const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
+const WORKER_URL = process.env.WORKER_URL ?? '';
 
-// Server-side fetch (Server Components, Route Handlers)
-export async function apiFetch(path: string, options?: RequestInit) {
-  const session = await auth();
-  return fetch(`${WORKER_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(session ? { Authorization: `Bearer ${(session as any).accessToken ?? ''}` } : {}),
-      ...options?.headers,
-    },
+async function proxyRequest(req: NextRequest, path: string[]) {
+  // NextAuth v5 stores the JWT in a cookie named 'authjs.session-token'
+  const sessionToken = req.cookies.get('authjs.session-token')?.value;
+  if (!sessionToken) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const workerPath = '/' + path.join('/');
+  const workerUrl = `${WORKER_URL}${workerPath}`;
+
+  const forwardHeaders = new Headers();
+  forwardHeaders.set('Authorization', `Bearer ${sessionToken}`);
+
+  const contentType = req.headers.get('content-type');
+  if (contentType) forwardHeaders.set('Content-Type', contentType);
+
+  const workerRes = await fetch(workerUrl, {
+    method: req.method,
+    headers: forwardHeaders,
+    body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+    // @ts-expect-error duplex is required for streaming body in Node.js fetch
+    duplex: 'half',
+  });
+
+  return new Response(workerRes.body, {
+    status: workerRes.status,
+    headers: workerRes.headers,
   });
 }
 
-// Client-side fetch — import getSession from 'next-auth/react' in client components
-export async function apiFetchClient(
-  path: string,
-  getToken: () => Promise<string | null>,
-  options?: RequestInit
-) {
-  const token = await getToken();
-  return fetch(`${WORKER_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
+export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxyRequest(req, path);
+}
+export async function POST(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxyRequest(req, path);
+}
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxyRequest(req, path);
 }
 ```
 
-**Step 2: Commit**
+**Step 2: Write the client fetch wrapper**
+
+`lib/api.ts`:
+```ts
+// Client-side fetch wrapper — routes through Next.js proxy at /api/proxy
+// which attaches the NextAuth JWT server-side before forwarding to the Worker.
+export async function apiFetchClient(
+  path: string,
+  options?: RequestInit
+): Promise<Response> {
+  return fetch(`/api/proxy${path}`, options);
+}
+```
+
+There's no client-side `getToken`/`accessToken` handling anywhere — components never see the JWT or the Worker URL, they just call `apiFetchClient('/vouchers', options)`.
+
+**Step 3: Commit**
 
 ```bash
-git add lib/api.ts
-git commit -m "feat: add api fetch wrapper with jwt auth"
+git add app/api/proxy lib/api.ts
+git commit -m "feat: add api fetch wrapper with server-side jwt proxy"
 ```
 
 ---
@@ -854,19 +944,14 @@ Read `components/saved-vouchers.tsx` and note all `supabase.*` calls.
 Replace Supabase fetch/delete calls with:
 ```ts
 // Fetch:
-const res = await apiFetchClient('/vouchers', getToken);
+const res = await apiFetchClient('/vouchers');
 const data = await res.json();
 
 // Delete:
-await apiFetchClient(`/vouchers/${id}`, getToken, { method: 'DELETE' });
+await apiFetchClient(`/vouchers/${id}`, { method: 'DELETE' });
 ```
 
-Where `getToken` retrieves the JWT from the NextAuth session:
-```ts
-import { useSession } from 'next-auth/react';
-const { data: session } = useSession();
-const getToken = async () => (session as any)?.accessToken ?? null;
-```
+No session/token handling is needed here — the proxy route from Task 11 attaches the JWT server-side.
 
 **Step 3: Remove supabase import**
 
@@ -904,7 +989,7 @@ git commit -m "feat: replace supabase with worker api in saved-comparisons"
 
 Replace the `supabase.from('vouchers').insert(...)` save call with:
 ```ts
-await apiFetchClient('/vouchers', getToken, {
+await apiFetchClient('/vouchers', {
   method: 'POST',
   body: JSON.stringify(voucherData),
 });
@@ -926,7 +1011,7 @@ git commit -m "feat: replace supabase with worker api in optimization-result"
 
 Replace the `supabase.from('saved_comparisons').insert(...)` save call with:
 ```ts
-await apiFetchClient('/comparisons', getToken, {
+await apiFetchClient('/comparisons', {
   method: 'POST',
   body: JSON.stringify(comparisonData),
 });
@@ -959,7 +1044,7 @@ async function handleUrlBlur(url: string) {
   if (!url) return;
   setFetchingProduct(true);
   try {
-    const res = await apiFetchClient('/product/fetch', getToken, {
+    const res = await apiFetchClient('/product/fetch', {
       method: 'POST',
       body: JSON.stringify({ url }),
     });
@@ -985,10 +1070,8 @@ Below the product image field, add:
     if (!file) return;
     const formData = new FormData();
     formData.append('file', file);
-    const token = await getToken();
-    const res = await fetch(`${WORKER_URL}/images/upload`, {
+    const res = await fetch('/api/proxy/images/upload', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
     const { imageKey } = await res.json<{ imageKey: string }>();
@@ -997,13 +1080,15 @@ Below the product image field, add:
 />
 ```
 
+This goes through the same `/api/proxy/*` route as `apiFetchClient` (called directly here since it's `FormData`, not JSON) — no token is handled in the browser.
+
 **Step 4: Show image preview**
 
-If `product_image` is set (an R2 key), render:
+If `product_image` is set (an R2 key), render it via the proxy so the request carries auth and the raw Worker URL stays server-side:
 ```tsx
 {productImage && (
   <img
-    src={`${WORKER_URL}/images/${productImage}`}
+    src={`/api/proxy/images/${productImage}`}
     alt="Product"
     className="w-24 h-24 object-cover rounded"
   />

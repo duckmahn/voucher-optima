@@ -11,30 +11,31 @@ Migrate the backend from Supabase to Cloudflare Workers (API) + D1 (database) + 
 ## Architecture
 
 ```
-┌─────────────────────────────┐      ┌──────────────────────────────────┐
-│   Next.js Frontend          │      │   Cloudflare Worker (API)        │
-│   (Vercel or CF Pages)      │      │                                  │
-│                             │      │  Routes (Hono):                  │
-│  - UI components (unchanged)│ HTTP │  POST   /vouchers                │
-│  - NextAuth (issues JWT) ───┼─────▶│  GET    /vouchers                │
-│  - fetch() with Bearer JWT  │      │  DELETE /vouchers/:id            │
-│                             │      │  POST   /comparisons             │
-└─────────────────────────────┘      │  GET    /comparisons             │
-                                     │  DELETE /comparisons/:id         │
-                                     │  POST   /product/fetch ──▶ D1+R2 │
-                                     │  POST   /images/upload ──▶ R2    │
-                                     │  GET    /images/:key   ──▶ R2    │
-                                     │                                  │
-                                     │  Bindings: D1 (SQLite), R2       │
-                                     └──────────────────────────────────┘
+┌─────────────────────────────┐      ┌───────────────────────────┐      ┌──────────────────────────────────┐
+│   Next.js Frontend          │      │  Next.js API Proxy        │      │   Cloudflare Worker (API)        │
+│   (client components)       │      │  /api/proxy/[...path]     │      │                                  │
+│                             │ fetch│  (runs server-side)        │ HTTP │  Routes (Hono):                  │
+│  - UI components (unchanged)├─────▶│  - reads NextAuth session   ├─────▶│  POST   /vouchers                │
+│  - apiFetchClient(path)     │      │    cookie (JWT), never       │      │  GET    /vouchers                │
+│    → /api/proxy${path}      │      │    sent to the browser       │      │  DELETE /vouchers/:id            │
+│  - no token/Worker URL      │      │  - attaches                  │      │  POST   /comparisons             │
+│    ever reaches the client  │      │    Authorization: Bearer     │      │  GET    /comparisons             │
+└─────────────────────────────┘      └───────────────────────────┘      │  DELETE /comparisons/:id         │
+                                                                          │  POST   /product/fetch ──▶ D1+R2 │
+                                                                          │  POST   /images/upload ──▶ R2    │
+                                                                          │  GET    /images/:key   ──▶ R2    │
+                                                                          │                                  │
+                                                                          │  Bindings: D1 (SQLite), R2       │
+                                                                          └──────────────────────────────────┘
 ```
 
 ### Auth Flow
 
-1. NextAuth in Next.js signs a JWT using `NEXTAUTH_SECRET`
-2. Frontend attaches it as `Authorization: Bearer <token>` on every request
-3. Worker validates the JWT using the same `NEXTAUTH_SECRET`
-4. Worker extracts `sub` (user ID) from the token payload and scopes all DB queries to it
+1. NextAuth in Next.js signs a session JWT, stored in the `authjs.session-token` cookie
+2. Client components call `apiFetchClient(path, options)` from `lib/api.ts`, which does nothing but `fetch('/api/proxy' + path, options)` — no token handling on the client
+3. `app/api/proxy/[...path]/route.ts` runs server-side, reads the `authjs.session-token` cookie directly off the incoming request, and forwards the request to `WORKER_URL` with `Authorization: Bearer <token>`
+4. Worker validates the JWT using the same secret and extracts `sub` (user ID), scoping all DB queries to it
+5. The Worker's URL and the raw JWT never reach the browser — `NEXT_PUBLIC_WORKER_URL` is not used for authenticated calls
 
 ---
 
@@ -127,32 +128,53 @@ Worker proxies R2 object with correct `Content-Type`. No public R2 bucket needed
 
 ### What gets added
 - `next-auth` + `app/api/auth/[...nextauth]/route.ts`
-- `lib/api.ts` — fetch wrapper that injects JWT
+- `app/api/proxy/[...path]/route.ts` — server-side route that reads the session cookie and attaches the JWT before forwarding to the Worker
+- `lib/api.ts` — thin client fetch wrapper that calls the proxy
 
 ### What gets removed
 - `lib/supabase.ts`
 - `@supabase/supabase-js` dependency
-- All `supabase.*` calls in components (replaced with `apiFetch`)
+- All `supabase.*` calls in components (replaced with `apiFetchClient`)
+
+### app/api/proxy/[...path]/route.ts
+
+```ts
+const WORKER_URL = process.env.WORKER_URL ?? '';
+
+async function proxyRequest(req: NextRequest, path: string[]) {
+  const sessionToken = req.cookies.get('authjs.session-token')?.value;
+  if (!sessionToken) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const forwardHeaders = new Headers();
+  forwardHeaders.set('Authorization', `Bearer ${sessionToken}`);
+  const contentType = req.headers.get('content-type');
+  if (contentType) forwardHeaders.set('Content-Type', contentType);
+
+  const workerRes = await fetch(`${WORKER_URL}/${path.join('/')}`, {
+    method: req.method,
+    headers: forwardHeaders,
+    body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+    duplex: 'half',
+  });
+  return new Response(workerRes.body, { status: workerRes.status, headers: workerRes.headers });
+}
+// exported as GET/POST/DELETE handlers, each awaiting params and delegating to proxyRequest
+```
 
 ### lib/api.ts
 
 ```ts
-import { getSession } from 'next-auth/react';
-
-const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL;
-
-export async function apiFetch(path: string, options?: RequestInit) {
-  const session = await getSession();
-  return fetch(`${WORKER_URL}${path}`, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${session?.accessToken}`,
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+// Client-side fetch wrapper — routes through Next.js proxy at /api/proxy
+// which attaches the NextAuth JWT server-side before forwarding to the Worker.
+export async function apiFetchClient(
+  path: string,
+  options?: RequestInit
+): Promise<Response> {
+  return fetch(`/api/proxy${path}`, options);
 }
 ```
+
+NextAuth v5's `session` object never has an `accessToken` field (only `session.user.id`, set from `token.sub`) — that's precisely why the JWT has to be read server-side from the cookie rather than passed around as `session.accessToken` on the client.
 
 ---
 
@@ -160,9 +182,11 @@ export async function apiFetch(path: string, options?: RequestInit) {
 
 ### Next.js (.env.local)
 ```
-NEXTAUTH_SECRET=<shared-secret>
-NEXTAUTH_URL=https://your-app.com
-NEXT_PUBLIC_WORKER_URL=https://your-worker.workers.dev
+AUTH_SECRET=<shared-secret>
+AUTH_GOOGLE_ID=<google-oauth-client-id>
+AUTH_GOOGLE_SECRET=<google-oauth-client-secret>
+WORKER_URL=https://your-worker.workers.dev        # server-side only, read by the proxy route
+NEXT_PUBLIC_WORKER_URL=                            # optional — only if client code calls the Worker directly
 ```
 
 ### Worker (wrangler secrets)
