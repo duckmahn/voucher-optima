@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiFetchClient } from "@/lib/api";
+import { useSession } from "next-auth/react";
 import {
   Card,
   CardContent,
@@ -17,58 +17,50 @@ import {
 } from "lucide-react";
 import { formatVND } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-
-interface StoreEntry {
-  storeName: string;
-  basePrice: number;
-  url?: string;
-  finalPrice: number;
-  discountAmount: number;
-  voucher?: any;
-}
-
-interface ComparisonData {
-  title: string;
-  stores: StoreEntry[];
-}
-
-interface SavedComparison {
-  id: string;
-  created_at: string;
-  data: ComparisonData;
-}
+import {
+  listComparisons,
+  deleteComparison,
+  migrateLocalDataToAccount,
+  type SavedComparison,
+} from "@/lib/storage";
 
 export function SavedComparisons() {
+  const { status } = useSession();
+  const isAuthed = status === "authenticated";
+
   const [comparisons, setComparisons] = useState<SavedComparison[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchComparisons();
-  }, []);
+    if (status === "loading") return;
+    let cancelled = false;
 
-  async function fetchComparisons() {
-    try {
+    (async () => {
       setLoading(true);
-      const res = await apiFetchClient('/comparisons');
-      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
-      const data = (await res.json()) as SavedComparison[];
-      setComparisons(data);
-    } catch (err: any) {
-      console.error("Error fetching comparisons:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+      setError(null);
+      try {
+        if (isAuthed) await migrateLocalDataToAccount();
+        const data = await listComparisons(isAuthed);
+        if (!cancelled) setComparisons(data);
+      } catch (err: any) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [status, isAuthed]);
 
   async function handleDelete(id: string) {
     if (!confirm("Are you sure you want to delete this comparison?")) return;
     try {
-      const res = await apiFetchClient(`/comparisons/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error(`Failed to delete: ${res.status}`);
-      setComparisons(comparisons.filter((c) => c.id !== id));
+      await deleteComparison(isAuthed, id);
+      setComparisons((prev) => prev.filter((c) => c.id !== id));
     } catch (err: any) {
       alert("Error deleting comparison: " + err.message);
     }
@@ -93,7 +85,11 @@ export function SavedComparisons() {
       <Card className="w-full border-destructive/20 bg-destructive/5">
         <CardContent className="p-6 text-center text-destructive">
           <p>Error loading saved comparisons: {error}</p>
-          <Button variant="outline" onClick={fetchComparisons} className="mt-4">
+          <Button
+            variant="outline"
+            onClick={() => window.location.reload()}
+            className="mt-4"
+          >
             Try Again
           </Button>
         </CardContent>

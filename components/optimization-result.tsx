@@ -5,7 +5,8 @@ import { type OptimizationResult, formatVND } from "@/lib/utils";
 import { CheckCircle2, AlertCircle, Save, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
-import { apiFetchClient } from "@/lib/api";
+import { useSession } from "next-auth/react";
+import { saveVoucher, type NewVoucherInput } from "@/lib/storage";
 
 interface OptimizationResultDisplayProps {
   result: OptimizationResult | null;
@@ -14,6 +15,8 @@ interface OptimizationResultDisplayProps {
 export function OptimizationResultDisplay({
   result,
 }: OptimizationResultDisplayProps) {
+  const { status } = useSession();
+  const isAuthed = status === "authenticated";
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
@@ -21,23 +24,23 @@ export function OptimizationResultDisplay({
 
     try {
       setSaving(true);
-      const res = await apiFetchClient('/vouchers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          percentage: result.voucher.percentage,
-          min_condition: result.voucher.minCondition,
-          max_discount: result.voucher.maxDiscount,
-          code: "SAVED-" + Math.floor(Math.random() * 1000),
-          product_price: result.voucher.productPrice,
-          product_url: result.voucher.productUrl,
-          product_image: result.voucher.productImage,
-          product_name: result.voucher.productName,
-        }),
-      });
-      if (!res.ok) throw new Error(`Failed to save: ${res.status}`);
+      const input: NewVoucherInput = {
+        percentage: result.voucher.percentage,
+        min_condition: result.voucher.minCondition,
+        max_discount: result.voucher.maxDiscount,
+        code: "SAVED-" + Math.floor(Math.random() * 1000),
+        product_price: result.voucher.productPrice ?? null,
+        product_url: result.voucher.productUrl ?? null,
+        product_image: result.voucher.productImage ?? null,
+        product_name: result.voucher.productName ?? null,
+      };
+      await saveVoucher(isAuthed, input);
 
-      alert("Voucher saved successfully!");
+      alert(
+        isAuthed
+          ? "Voucher saved to your account!"
+          : "Voucher saved locally in this browser. Sign in to keep it permanently."
+      );
       // Ideally trigger a refresh of the list, but for now a page reload or just knowing it's saved is okay.
       // We can use a global context or SWR/React Query for better state management later.
       window.location.reload();
@@ -72,7 +75,7 @@ export function OptimizationResultDisplay({
           <div className="flex items-center gap-4 p-4 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900">
             {result.voucher.productImage ? (
               <img
-                src={result.voucher.productImage}
+                src={`/api/proxy/images/${result.voucher.productImage}`}
                 alt="Product"
                 className="w-16 h-16 object-cover rounded-md border bg-white shadow-sm"
               />

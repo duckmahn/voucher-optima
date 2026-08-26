@@ -36,7 +36,8 @@ import {
   ExternalLink,
   Loader2,
 } from "lucide-react";
-import { apiFetchClient } from "@/lib/api";
+import { useSession } from "next-auth/react";
+import { saveComparison } from "@/lib/storage";
 import { MoneyInput } from "@/components/ui/money-input";
 
 const storeSchema = z.object({
@@ -54,6 +55,8 @@ const formSchema = z.object({
 });
 
 export function PriceComparison() {
+  const { status } = useSession();
+  const isAuthed = status === "authenticated";
   const [results, setResults] = useState<ComparisonResult[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -113,17 +116,16 @@ export function PriceComparison() {
         voucher: r.storeOption.voucher,
       }));
 
-      const res = await apiFetchClient('/comparisons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: `Comparison - ${new Date().toLocaleString()}`,
-          stores: storesToSave,
-        }),
+      await saveComparison(isAuthed, {
+        title: `Comparison - ${new Date().toLocaleString()}`,
+        stores: storesToSave,
       });
-      if (!res.ok) throw new Error(`Failed to save: ${res.status}`);
 
-      alert("Comparison saved successfully!");
+      alert(
+        isAuthed
+          ? "Comparison saved to your account!"
+          : "Comparison saved locally in this browser. Sign in to keep it permanently."
+      );
       window.location.reload(); // Refresh to show in saved list
     } catch (err: any) {
       console.error("Error saving comparison:", err);

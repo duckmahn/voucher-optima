@@ -1,50 +1,53 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { apiFetchClient } from "@/lib/api";
 import { formatVND } from "@/lib/utils";
 import { Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-type SavedVoucher = {
-  id: string;
-  code: string | null;
-  percentage: number;
-  min_condition: number;
-  max_discount: number;
-  created_at: string;
-};
+import {
+  listVouchers,
+  deleteVoucher,
+  migrateLocalDataToAccount,
+  type SavedVoucher,
+} from "@/lib/storage";
 
 export function SavedVouchers() {
+  const { status } = useSession();
+  const isAuthed = status === "authenticated";
+
   const [vouchers, setVouchers] = useState<SavedVoucher[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchVouchers();
-  }, []);
+    if (status === "loading") return;
+    let cancelled = false;
 
-  async function fetchVouchers() {
-    try {
+    (async () => {
       setLoading(true);
-      const res = await apiFetchClient('/vouchers');
-      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
-      const data = (await res.json()) as SavedVoucher[];
-      setVouchers(data);
-    } catch (err: any) {
-      console.error("Error fetching vouchers:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+      setError(null);
+      try {
+        if (isAuthed) await migrateLocalDataToAccount();
+        const data = await listVouchers(isAuthed);
+        if (!cancelled) setVouchers(data);
+      } catch (err: any) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
 
-  async function deleteVoucher(id: string) {
+    return () => {
+      cancelled = true;
+    };
+  }, [status, isAuthed]);
+
+  async function handleDelete(id: string) {
     try {
-      const res = await apiFetchClient(`/vouchers/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error(`Failed to delete: ${res.status}`);
-      setVouchers(vouchers.filter((v) => v.id !== id));
+      await deleteVoucher(isAuthed, id);
+      setVouchers((prev) => prev.filter((v) => v.id !== id));
     } catch (err: any) {
       console.error("Error deleting voucher:", err);
       alert("Failed to delete voucher");
@@ -82,7 +85,14 @@ export function SavedVouchers() {
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle>Saved Vouchers</CardTitle>
+        <CardTitle className="flex items-center justify-between">
+          Saved Vouchers
+          {!isAuthed && (
+            <span className="text-xs font-normal text-muted-foreground">
+              Saved in this browser
+            </span>
+          )}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         {vouchers.length === 0 ? (
@@ -118,7 +128,7 @@ export function SavedVouchers() {
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                  onClick={() => deleteVoucher(voucher.id)}
+                  onClick={() => handleDelete(voucher.id)}
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

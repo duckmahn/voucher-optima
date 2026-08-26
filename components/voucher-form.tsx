@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { useState } from "react";
 import { z } from "zod";
+import { useSession } from "next-auth/react";
 import { apiFetchClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,6 +51,8 @@ interface VoucherFormProps {
 }
 
 export function VoucherForm({ onCalculate }: VoucherFormProps) {
+  const { status } = useSession();
+  const isAuthed = status === "authenticated";
   const [fetchingProduct, setFetchingProduct] = useState(false);
 
   const form = useForm({
@@ -62,7 +65,7 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
   });
 
   async function handleUrlBlur(url: string) {
-    if (!url) return;
+    if (!url || !isAuthed) return;
     setFetchingProduct(true);
     try {
       const res = await apiFetchClient('/product/fetch', {
@@ -153,6 +156,11 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
                             Fetching…
                           </span>
                         )}
+                        {!isAuthed && (
+                          <span className="text-xs text-muted-foreground">
+                            (Sign in to auto-fill)
+                          </span>
+                        )}
                       </FormLabel>
                       <FormControl>
                         <Input
@@ -184,7 +192,8 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
                           <Input
                             type="file"
                             accept="image/*"
-                            className="cursor-pointer"
+                            disabled={!isAuthed}
+                            className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                             onChange={async (e) => {
                               const file = e.target.files?.[0];
                               if (!file) return;
@@ -204,6 +213,11 @@ export function VoucherForm({ onCalculate }: VoucherFormProps) {
                               }
                             }}
                           />
+                          {!isAuthed && (
+                            <p className="text-xs text-muted-foreground">
+                              Sign in to upload a product image.
+                            </p>
+                          )}
                         </div>
                       </FormControl>
                       <FormMessage />
