@@ -20,6 +20,19 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Branding and SEO
+
+The browser title, search description, and social metadata are defined in
+`app/layout.tsx`. Set `SITE_URL` to the public origin (for example,
+`https://your-domain.com`) in `.env.local` and your hosting environment before
+building. This enables the canonical URL and absolute social preview URLs.
+Without it, preview URLs use `http://localhost:3000` for local development.
+
+Edit `app/icon.svg` and `public/social-preview.svg`, then run
+`node scripts/generate-brand-assets.mjs` to regenerate the favicon, Apple touch
+icon, manifest icons, and social preview PNG. The mobile app name and icon paths
+are configured in `app/manifest.ts`. The manifest does not add offline support.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
